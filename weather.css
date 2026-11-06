@@ -1,0 +1,163 @@
+/* JG-WEATHER-START */
+/* Typecho Handsome 风格天气控件（跟随 grass 配色，不引入玻璃拟态/紫色渐变） */
+#jg-weather {
+    position: relative;
+    overflow: hidden;
+    margin-bottom: 18px;
+    padding: 16px 18px 13px !important;
+    border-radius: 6px;
+    color: var(--text-color, #666);
+    font-size: 13px;
+    line-height: 1.5;
+}
+#jg-weather .jg-w-bar {
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, #7fa88b, #b9d3bf);
+    opacity: .85;
+}
+#jg-weather[data-wtype="sunny"]   .jg-w-bar { background: linear-gradient(90deg, #e0b06a, #efd8ae); }
+#jg-weather[data-wtype="cloudy"]  .jg-w-bar { background: linear-gradient(90deg, #8eaab6, #c4d7de); }
+#jg-weather[data-wtype="overcast"] .jg-w-bar { background: linear-gradient(90deg, #94a49d, #cbd6d0); }
+#jg-weather[data-wtype="fog"]     .jg-w-bar { background: linear-gradient(90deg, #a3afb6, #d2dade); }
+#jg-weather[data-wtype="rain"]    .jg-w-bar { background: linear-gradient(90deg, #6c9ab4, #b3d0dd); }
+#jg-weather[data-wtype="snow"]    .jg-w-bar { background: linear-gradient(90deg, #8fb6cd, #d4e6ee); }
+#jg-weather[data-wtype="thunder"] .jg-w-bar { background: linear-gradient(90deg, #8d82a6, #cbc3d8); }
+#jg-weather[data-wtype="night"]   .jg-w-bar { background: linear-gradient(90deg, #6b7c9b, #aab6cb); }
+
+#jg-weather h5.widget-title {
+    display: flex;
+    align-items: center;
+    margin: 0 0 12px !important;
+    padding: 0 !important;
+    font-size: 14px;
+    font-weight: 600;
+    color: #487054;
+    border: 0 !important;
+}
+#jg-weather .jg-w-city {
+    margin-left: 8px;
+    padding: 1px 7px;
+    border-radius: 10px;
+    background: rgba(90, 123, 99, .10);
+    font-size: 11px;
+    font-weight: 400;
+    color: #6b8c76;
+}
+#jg-weather .jg-w-refresh {
+    margin-left: auto;
+    width: 22px; height: 22px;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: transparent;
+    color: #a8b5ac;
+    font-size: 15px;
+    line-height: 22px;
+    text-align: center;
+    cursor: pointer;
+    transition: color .2s, background .2s, transform .4s;
+}
+#jg-weather .jg-w-refresh:hover { color: #487054; background: rgba(90, 123, 99, .10); }
+#jg-weather .jg-w-refresh.is-spin { transform: rotate(360deg); }
+
+#jg-weather .jg-w-main {
+    display: flex;
+    align-items: center;
+    min-height: 56px;
+    gap: 12px;
+}
+#jg-weather .jg-w-icon {
+    flex: 0 0 44px;
+    width: 44px; height: 44px;
+    display: flex; align-items: center; justify-content: center;
+    border-radius: 12px;
+    background: rgba(90, 123, 99, .07);
+}
+#jg-weather .jg-w-icon svg { width: 28px; height: 28px; display: block; }
+#jg-weather .jg-w-temp {
+    flex: 0 0 auto;
+    font-size: 34px;
+    font-weight: 300;
+    line-height: 1;
+    letter-spacing: -1px;
+    color: #3d4a41;
+    font-variant-numeric: tabular-nums;
+}
+#jg-weather .jg-w-temp sup { font-size: 17px; font-weight: 400; vertical-align: super; margin-left: 1px; }
+#jg-weather .jg-w-meta { min-width: 0; padding-left: 2px; }
+#jg-weather .jg-w-desc { font-size: 14px; color: #4b5c50; font-weight: 500; }
+#jg-weather .jg-w-feels { margin-top: 2px; font-size: 11px; color: #99a69d; }
+
+#jg-weather .jg-w-details {
+    display: flex;
+    margin-top: 13px;
+    padding-top: 10px;
+    border-top: 1px solid rgba(90, 123, 99, .12);
+    font-size: 11px;
+    color: #7f8c83;
+}
+#jg-weather .jg-w-details span { flex: 1 1 0; min-width: 0; text-align: center; white-space: nowrap; }
+#jg-weather .jg-w-details span + span { border-left: 1px solid rgba(90, 123, 99, .12); }
+#jg-weather .jg-w-details b { font-weight: 500; color: #5d6f63; }
+
+#jg-weather .jg-w-foot {
+    margin-top: 8px;
+    font-size: 10px;
+    color: #b0bab3;
+    text-align: right;
+}
+#jg-weather .jg-w-foot .jg-w-stale { color: #c08a5a; }
+
+/* 加载 / 错误态 */
+#jg-weather .jg-w-loading,
+#jg-weather .jg-w-error {
+    display: flex; align-items: center; justify-content: center; gap: 8px;
+    min-height: 66px;
+    font-size: 12px;
+    color: #9aa79e;
+}
+#jg-weather .jg-w-loading i {
+    width: 13px; height: 13px;
+    border: 2px solid rgba(90, 123, 99, .18);
+    border-top-color: #487054;
+    border-radius: 50%;
+    animation: jg-w-spin .8s linear infinite;
+}
+@keyframes jg-w-spin { to { transform: rotate(360deg); } }
+#jg-weather .jg-w-error { flex-direction: column; gap: 4px; color: #a8968f; }
+#jg-weather .jg-w-error a { color: #487054; text-decoration: none; cursor: pointer; }
+#jg-weather .jg-w-error a:hover { text-decoration: underline; }
+
+/* 暗色模式：JS 检测 html.theme-dark 后加 .jg-dark，另留常见类名兜底 */
+#jg-weather.jg-dark,
+html.theme-dark #jg-weather,
+html.night #jg-weather,
+body.dark #jg-weather,
+[data-theme="dark"] #jg-weather {
+    background: #252a28 !important;
+    color: #a9b5ad;
+}
+#jg-weather.jg-dark h5.widget-title,
+html.theme-dark #jg-weather h5.widget-title { color: #8fbf9c; }
+#jg-weather.jg-dark .jg-w-temp,
+html.theme-dark #jg-weather .jg-w-temp { color: #e0e8e2; }
+#jg-weather.jg-dark .jg-w-desc,
+html.theme-dark #jg-weather .jg-w-desc { color: #c8d4cb; }
+#jg-weather.jg-dark .jg-w-details,
+#jg-weather.jg-dark .jg-w-details span + span,
+html.theme-dark #jg-weather .jg-w-details,
+html.theme-dark #jg-weather .jg-w-details span + span { border-color: rgba(255,255,255,.08); }
+#jg-weather.jg-dark .jg-w-details b,
+html.theme-dark #jg-weather .jg-w-details b { color: #b6c6ba; }
+#jg-weather.jg-dark .jg-w-icon,
+html.theme-dark #jg-weather .jg-w-icon { background: rgba(255,255,255,.06); }
+#jg-weather.jg-dark .jg-w-city,
+html.theme-dark #jg-weather .jg-w-city { background: rgba(143,191,156,.12); color: #9ccbab; }
+
+@media (max-width: 767px) {
+    #jg-weather { padding: 14px 15px 12px !important; }
+    #jg-weather .jg-w-temp { font-size: 30px; }
+}
+/* JG-WEATHER-END */
