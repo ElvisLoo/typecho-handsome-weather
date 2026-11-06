@@ -83,6 +83,7 @@
         var range = (d.low === null || d.high === null || d.low === undefined || d.high === undefined) ?
                     '--' : d.low + ' ~ ' + d.high + '°';
         var foot = esc(d.time || '') + ' 更新 · ' + esc(d.source || 'Open-Meteo') +
+                   (d.fallback ? ' <span class="jg-w-stale">（未能定位，显示默认城市）</span>' : '') +
                    (d.stale ? ' <span class="jg-w-stale">（缓存数据）</span>' : '');
 
         box.querySelector('.jg-w-body').innerHTML =
