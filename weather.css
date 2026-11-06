@@ -1,5 +1,5 @@
 /* JG-WEATHER-START */
-/* Typecho Handsome 风格天气控件（跟随 grass 配色，不引入玻璃拟态/紫色渐变） */
+/* Typecho Handsome 风格天气控件（grass 配色 / 白底，含按天气类型变化的动效层） */
 #jg-weather {
     position: relative;
     overflow: hidden;
@@ -9,23 +9,179 @@
     color: var(--text-color, #666);
     font-size: 13px;
     line-height: 1.5;
+    transition: box-shadow .3s ease, transform .3s ease;
 }
+#jg-weather:hover { transform: translateY(-2px); box-shadow: 0 6px 18px rgba(60, 80, 66, .10); }
+#jg-weather > h5.widget-title,
+#jg-weather > .jg-w-body { position: relative; z-index: 2; }
+
+/* 顶部色条：随时间缓慢流动，颜色跟随天气 */
 #jg-weather .jg-w-bar {
     position: absolute;
     top: 0; left: 0; right: 0;
+    z-index: 3;
     height: 2px;
-    background: linear-gradient(90deg, #7fa88b, #b9d3bf);
+    background: linear-gradient(90deg, #7fa88b, #b9d3bf, #7fa88b);
+    background-size: 200% 100%;
     opacity: .85;
+    animation: jg-w-bar-flow 8s linear infinite;
 }
-#jg-weather[data-wtype="sunny"]   .jg-w-bar { background: linear-gradient(90deg, #e0b06a, #efd8ae); }
-#jg-weather[data-wtype="cloudy"]  .jg-w-bar { background: linear-gradient(90deg, #8eaab6, #c4d7de); }
-#jg-weather[data-wtype="overcast"] .jg-w-bar { background: linear-gradient(90deg, #94a49d, #cbd6d0); }
-#jg-weather[data-wtype="fog"]     .jg-w-bar { background: linear-gradient(90deg, #a3afb6, #d2dade); }
-#jg-weather[data-wtype="rain"]    .jg-w-bar { background: linear-gradient(90deg, #6c9ab4, #b3d0dd); }
-#jg-weather[data-wtype="snow"]    .jg-w-bar { background: linear-gradient(90deg, #8fb6cd, #d4e6ee); }
-#jg-weather[data-wtype="thunder"] .jg-w-bar { background: linear-gradient(90deg, #8d82a6, #cbc3d8); }
-#jg-weather[data-wtype="night"]   .jg-w-bar { background: linear-gradient(90deg, #6b7c9b, #aab6cb); }
+#jg-weather[data-wtype="sunny"]    .jg-w-bar { background: linear-gradient(90deg, #e0b06a, #efd8ae, #e0b06a); }
+#jg-weather[data-wtype="cloudy"]   .jg-w-bar { background: linear-gradient(90deg, #8eaab6, #c4d7de, #8eaab6); }
+#jg-weather[data-wtype="overcast"] .jg-w-bar { background: linear-gradient(90deg, #94a49d, #cbd6d0, #94a49d); }
+#jg-weather[data-wtype="fog"]      .jg-w-bar { background: linear-gradient(90deg, #a3afb6, #d2dade, #a3afb6); }
+#jg-weather[data-wtype="rain"]     .jg-w-bar { background: linear-gradient(90deg, #6c9ab4, #b3d0dd, #6c9ab4); }
+#jg-weather[data-wtype="snow"]     .jg-w-bar { background: linear-gradient(90deg, #8fb6cd, #d4e6ee, #8fb6cd); }
+#jg-weather[data-wtype="thunder"]  .jg-w-bar { background: linear-gradient(90deg, #8d82a6, #cbc3d8, #8d82a6); }
+#jg-weather[data-wtype="night"]    .jg-w-bar { background: linear-gradient(90deg, #6b7c9b, #aab6cb, #6b7c9b); }
+@keyframes jg-w-bar-flow { 0% { background-position: 0% 50%; } 100% { background-position: 200% 50%; } }
 
+/* ---------- 动效层：粒子 / 光晕 / 扫光 / 闪电 ---------- */
+#jg-weather .jg-w-fx {
+    position: absolute; inset: 0; z-index: 0;
+    overflow: hidden;
+    border-radius: inherit;
+    pointer-events: none;
+}
+#jg-weather .jg-w-fx i { position: absolute; display: block; }
+
+/* 极淡的天气色光晕（仍是白底，只是让卡片有呼吸感） */
+#jg-weather .jg-w-fx::before {
+    content: '';
+    position: absolute;
+    top: -92px; right: -58px;
+    width: 180px; height: 180px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(127, 168, 139, .11), transparent 70%);
+    animation: jg-w-aura 12s ease-in-out infinite alternate;
+}
+#jg-weather[data-wtype="sunny"]    .jg-w-fx::before { background: radial-gradient(circle, rgba(224, 176, 106, .17), transparent 70%); }
+#jg-weather[data-wtype="rain"]     .jg-w-fx::before { background: radial-gradient(circle, rgba(108, 154, 180, .14), transparent 70%); }
+#jg-weather[data-wtype="snow"]     .jg-w-fx::before { background: radial-gradient(circle, rgba(143, 182, 205, .15), transparent 70%); }
+#jg-weather[data-wtype="thunder"]  .jg-w-fx::before { background: radial-gradient(circle, rgba(141, 130, 166, .14), transparent 70%); }
+#jg-weather[data-wtype="night"]    .jg-w-fx::before { background: radial-gradient(circle, rgba(107, 124, 155, .15), transparent 70%); }
+@keyframes jg-w-aura {
+    0%   { transform: translate3d(0, 0, 0) scale(1); }
+    100% { transform: translate3d(-34px, 26px, 0) scale(1.24); }
+}
+
+/* 一道很淡的高光周期性掠过卡片 */
+#jg-weather .jg-w-sweep {
+    position: absolute; top: 0; left: 0; z-index: 1;
+    width: 38%; height: 100%;
+    background: linear-gradient(105deg, rgba(255,255,255,0), rgba(120,150,130,.085), rgba(255,255,255,0));
+    pointer-events: none;
+    animation: jg-w-sweep 7s ease-in-out 1.2s infinite;
+}
+@keyframes jg-w-sweep {
+    0%, 100% { transform: translate3d(-160%, 0, 0) skewX(-20deg); }
+    45%, 55% { transform: translate3d(360%, 0, 0) skewX(-20deg); }
+}
+
+/* 雨滴 */
+#jg-weather .jg-w-p-rain {
+    top: -12px; width: 1.5px; height: 11px;
+    border-radius: 1px;
+    background: linear-gradient(to bottom, rgba(99,143,170,0), rgba(99,143,170,.62));
+    animation-name: jg-w-rain-fall;
+    animation-timing-function: linear;
+    animation-iteration-count: infinite;
+}
+@keyframes jg-w-rain-fall {
+    0%       { transform: translate3d(0, -6px, 0); opacity: 0; }
+    12%, 88% { opacity: 1; }
+    100%     { transform: translate3d(-7px, 200px, 0); opacity: 0; }
+}
+
+/* 雪花 */
+#jg-weather .jg-w-p-snow {
+    top: -10px;
+    width: var(--p-size, 3px); height: var(--p-size, 3px);
+    border-radius: 50%;
+    background: rgba(131, 174, 198, .78);
+    animation-name: jg-w-snow-fall;
+    animation-timing-function: linear;
+    animation-iteration-count: infinite;
+}
+@keyframes jg-w-snow-fall {
+    0%       { transform: translate3d(0, -6px, 0) rotate(0deg); opacity: 0; }
+    10%, 88% { opacity: .9; }
+    100%     { transform: translate3d(24px, 200px, 0) rotate(360deg); opacity: 0; }
+}
+
+/* 晴天：缓慢上浮的暖色光点 */
+#jg-weather .jg-w-p-glow {
+    width: var(--p-size, 4px); height: var(--p-size, 4px);
+    border-radius: 50%;
+    background: rgba(224, 176, 106, .6);
+    animation-name: jg-w-glow-rise;
+    animation-timing-function: ease-in-out;
+    animation-iteration-count: infinite;
+}
+@keyframes jg-w-glow-rise {
+    0%       { transform: translate3d(0, 22px, 0) scale(.6); opacity: 0; }
+    30%, 70% { opacity: .85; }
+    100%     { transform: translate3d(12px, -74px, 0) scale(1.25); opacity: 0; }
+}
+
+/* 夜间：星点闪烁 */
+#jg-weather .jg-w-p-star {
+    width: 2px; height: 2px;
+    border-radius: 50%;
+    background: rgba(107, 124, 155, .85);
+    animation-name: jg-w-twinkle;
+    animation-timing-function: ease-in-out;
+    animation-iteration-count: infinite;
+}
+@keyframes jg-w-twinkle {
+    0%, 100% { opacity: .15; transform: scale(.6); }
+    50%      { opacity: 1; transform: scale(1.35); }
+}
+
+/* 多云 / 阴：云带横向漂移 */
+#jg-weather .jg-w-p-cloud {
+    width: 30px; height: 8px;
+    border-radius: 8px;
+    background: rgba(126, 157, 170, .20);
+    animation-name: jg-w-cloud-drift;
+    animation-timing-function: linear;
+    animation-iteration-count: infinite;
+}
+@keyframes jg-w-cloud-drift {
+    0%       { transform: translate3d(-40px, 0, 0); opacity: 0; }
+    15%, 85% { opacity: .9; }
+    100%     { transform: translate3d(280px, 0, 0); opacity: 0; }
+}
+
+/* 雾：雾带左右轻摆 */
+#jg-weather .jg-w-p-fog {
+    left: 12%; width: 76%; height: 5px;
+    border-radius: 5px;
+    background: linear-gradient(90deg, transparent, rgba(152,166,174,.18), transparent);
+    animation-name: jg-w-fog-sway;
+    animation-timing-function: ease-in-out;
+    animation-iteration-count: infinite;
+}
+@keyframes jg-w-fog-sway {
+    0%, 100% { transform: translate3d(-9px, 0, 0); opacity: .40; }
+    50%      { transform: translate3d(9px, 0, 0); opacity: .78; }
+}
+
+/* 雷雨：整卡偶发闪白 */
+#jg-weather[data-wtype="thunder"] .jg-w-fx::after {
+    content: '';
+    position: absolute; inset: 0;
+    background: rgba(255, 255, 220, 0);
+    animation: jg-w-flash 7s linear infinite;
+}
+@keyframes jg-w-flash {
+    0%, 88%, 92%, 100% { background: rgba(255,255,220,0); }
+    89% { background: rgba(255,255,220,.30); }
+    90% { background: rgba(255,255,220,.05); }
+    91% { background: rgba(255,255,220,.42); }
+}
+
+/* ---------- 标题 / 数值 / 详情 ---------- */
 #jg-weather h5.widget-title {
     display: flex;
     align-items: center;
@@ -69,13 +225,48 @@
     gap: 12px;
 }
 #jg-weather .jg-w-icon {
+    position: relative;
     flex: 0 0 44px;
     width: 44px; height: 44px;
     display: flex; align-items: center; justify-content: center;
     border-radius: 12px;
     background: rgba(90, 123, 99, .07);
+    animation: jg-w-icon-glow 3.4s ease-in-out infinite;
 }
-#jg-weather .jg-w-icon svg { width: 28px; height: 28px; display: block; }
+#jg-weather .jg-w-icon svg { position: relative; z-index: 1; width: 28px; height: 28px; display: block; }
+@keyframes jg-w-icon-glow {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(90, 123, 99, 0); }
+    50%      { box-shadow: 0 0 0 5px rgba(90, 123, 99, .075); }
+}
+
+/* 太阳光芒自转（SVG 内的 g） */
+#jg-weather .jg-w-rays {
+    transform-box: fill-box;
+    transform-origin: center;
+    animation: jg-w-ray-spin 16s linear infinite;
+}
+@keyframes jg-w-ray-spin { to { transform: rotate(360deg); } }
+
+/* 云 / 雾 / 雨 / 雪图标轻微浮动；夜间月亮呼吸；雷电偶发高亮 */
+#jg-weather[data-wtype="cloudy"] .jg-w-icon svg,
+#jg-weather[data-wtype="overcast"] .jg-w-icon svg,
+#jg-weather[data-wtype="fog"] .jg-w-icon svg,
+#jg-weather[data-wtype="rain"] .jg-w-icon svg,
+#jg-weather[data-wtype="snow"] .jg-w-icon svg { animation: jg-w-cloud-float 3.6s ease-in-out infinite; }
+@keyframes jg-w-cloud-float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-3px); } }
+
+#jg-weather[data-wtype="night"] .jg-w-icon svg { animation: jg-w-moon-glow 4s ease-in-out infinite; }
+@keyframes jg-w-moon-glow {
+    0%, 100% { filter: drop-shadow(0 0 1px rgba(107,124,155,.25)); }
+    50%      { filter: drop-shadow(0 0 5px rgba(107,124,155,.65)); }
+}
+#jg-weather[data-wtype="thunder"] .jg-w-icon svg { animation: jg-w-thunder 7s linear infinite; }
+@keyframes jg-w-thunder {
+    0%, 88%, 92%, 100% { filter: none; opacity: 1; }
+    89% { filter: drop-shadow(0 0 5px rgba(180,160,90,.9)); opacity: .75; }
+    91% { filter: drop-shadow(0 0 9px rgba(210,190,90,1)); opacity: 1; }
+}
+
 #jg-weather .jg-w-temp {
     flex: 0 0 auto;
     font-size: 34px;
@@ -110,7 +301,21 @@
 }
 #jg-weather .jg-w-foot .jg-w-stale { color: #c08a5a; }
 
-/* 加载 / 错误态 */
+/* ---------- 数据到位后的分层入场 ---------- */
+#jg-weather.jg-w-anim > h5.widget-title   { animation: jg-w-slide-down .5s ease .05s backwards; }
+#jg-weather.jg-w-anim .jg-w-main          { animation: jg-w-slide-up .5s ease .14s backwards; }
+#jg-weather.jg-w-anim .jg-w-temp          { animation: jg-w-temp-pop .55s cubic-bezier(.22,.61,.36,1) .24s backwards; }
+#jg-weather.jg-w-anim .jg-w-details span:nth-child(1) { animation: jg-w-chip-in .45s ease .32s backwards; }
+#jg-weather.jg-w-anim .jg-w-details span:nth-child(2) { animation: jg-w-chip-in .45s ease .40s backwards; }
+#jg-weather.jg-w-anim .jg-w-details span:nth-child(3) { animation: jg-w-chip-in .45s ease .48s backwards; }
+#jg-weather.jg-w-anim .jg-w-foot          { animation: jg-w-fade .5s ease .54s backwards; }
+@keyframes jg-w-slide-down { 0% { opacity: 0; transform: translateY(-8px); } 100% { opacity: 1; transform: translateY(0); } }
+@keyframes jg-w-slide-up   { 0% { opacity: 0; transform: translateY(12px); } 100% { opacity: 1; transform: translateY(0); } }
+@keyframes jg-w-fade       { 0% { opacity: 0; } 100% { opacity: 1; } }
+@keyframes jg-w-temp-pop   { 0% { opacity: 0; transform: scale(.72); } 60% { transform: scale(1.08); } 100% { opacity: 1; transform: scale(1); } }
+@keyframes jg-w-chip-in    { 0% { opacity: 0; transform: translateY(8px) scale(.95); } 100% { opacity: 1; transform: translateY(0) scale(1); } }
+
+/* ---------- 加载 / 错误态 ---------- */
 #jg-weather .jg-w-loading,
 #jg-weather .jg-w-error {
     display: flex; align-items: center; justify-content: center; gap: 8px;
@@ -130,7 +335,7 @@
 #jg-weather .jg-w-error a { color: #487054; text-decoration: none; cursor: pointer; }
 #jg-weather .jg-w-error a:hover { text-decoration: underline; }
 
-/* 暗色模式：JS 检测 html.theme-dark 后加 .jg-dark，另留常见类名兜底 */
+/* ---------- 暗色模式 ---------- */
 #jg-weather.jg-dark,
 html.theme-dark #jg-weather,
 html.night #jg-weather,
@@ -139,6 +344,10 @@ body.dark #jg-weather,
     background: #252a28 !important;
     color: #a9b5ad;
 }
+#jg-weather.jg-dark .jg-w-fx,
+html.theme-dark #jg-weather .jg-w-fx { opacity: .55; }
+#jg-weather.jg-dark .jg-w-sweep,
+html.theme-dark #jg-weather .jg-w-sweep { opacity: .5; }
 #jg-weather.jg-dark h5.widget-title,
 html.theme-dark #jg-weather h5.widget-title { color: #8fbf9c; }
 #jg-weather.jg-dark .jg-w-temp,
@@ -155,6 +364,27 @@ html.theme-dark #jg-weather .jg-w-details b { color: #b6c6ba; }
 html.theme-dark #jg-weather .jg-w-icon { background: rgba(255,255,255,.06); }
 #jg-weather.jg-dark .jg-w-city,
 html.theme-dark #jg-weather .jg-w-city { background: rgba(143,191,156,.12); color: #9ccbab; }
+
+/* 页面切到后台时暂停所有循环动画，省电也省合成层 */
+#jg-weather.jg-w-paused .jg-w-fx i,
+#jg-weather.jg-w-paused .jg-w-fx::before,
+#jg-weather.jg-w-paused .jg-w-fx::after,
+#jg-weather.jg-w-paused .jg-w-sweep,
+#jg-weather.jg-w-paused .jg-w-bar,
+#jg-weather.jg-w-paused .jg-w-icon,
+#jg-weather.jg-w-paused .jg-w-icon svg,
+#jg-weather.jg-w-paused .jg-w-rays { animation-play-state: paused !important; }
+
+/* 尊重系统的「减少动态效果」 */
+@media (prefers-reduced-motion: reduce) {
+    #jg-weather,
+    #jg-weather *,
+    #jg-weather *::before,
+    #jg-weather *::after { animation: none !important; transition: none !important; }
+    #jg-weather .jg-w-fx,
+    #jg-weather .jg-w-sweep { display: none; }
+    #jg-weather:hover { transform: none; }
+}
 
 @media (max-width: 767px) {
     #jg-weather { padding: 14px 15px 12px !important; }

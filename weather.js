@@ -1,6 +1,6 @@
 /* JG-WEATHER-START */
-/* Typecho Handsome 右侧栏天气控件
-   数据源：同源 /weather.php（服务端代理 Open-Meteo），不依赖任何第三方私有接口
+/* Typecho Handsome 右侧栏天气控件（含按天气类型变化的动效层）
+   数据源：同源 /weather.php（服务端按访客 IP 定位 + Open-Meteo）
    挂载点：#sidebar 第一个子元素；PJAX 换页后由 MutationObserver 自动重挂 */
 (function () {
     var ID = 'jg-weather', KEY = 'jg_weather_v1', TTL = 600000;
@@ -29,7 +29,8 @@
         var body;
         switch (type) {
             case 'sunny':
-                body = '<circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2.5 12h2M19.5 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>'; break;
+                body = '<g class="jg-w-rays"><path d="M12 2.5v2M12 19.5v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2.5 12h2M19.5 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></g>' +
+                       '<circle cx="12" cy="12" r="4"/>'; break;
             case 'night':
                 body = '<path d="M20 14.6A8.6 8.6 0 0 1 9.4 4a8.6 8.6 0 1 0 10.6 10.6z"/><path d="M17 5.5h.01M19.5 8h.01"/>'; break;
             case 'cloudy':
@@ -67,6 +68,82 @@
         } catch (e) {}
         return false;
     }
+    function reducedMotion() {
+        try {
+            return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+        } catch (e) { return false; }
+    }
+
+    /* ---------- 动效层：按天气类型生成粒子 ---------- */
+    // 确定性伪随机：同一天气每次刷新位置一致，不会跳变，也便于回归测试
+    function prnd(k) {
+        var x = Math.sin(k * 127.1 + 311.7) * 43758.5453;
+        return x - Math.floor(x);
+    }
+    var FX = {
+        sunny:    [4, 'glow'],
+        cloudy:   [3, 'cloud'],
+        overcast: [3, 'cloud'],
+        fog:      [4, 'fog'],
+        rain:     [12, 'rain'],
+        snow:     [10, 'snow'],
+        thunder:  [14, 'rain'],
+        night:    [8, 'star']
+    };
+    var FXSEED = { sunny: 11, cloudy: 23, overcast: 37, fog: 41, rain: 53, snow: 67, thunder: 71, night: 83 };
+    function buildFx(box, type) {
+        var fx = box.querySelector('.jg-w-fx');
+        if (!fx) return;
+        var spec = FX[type];
+        if (!spec) { fx.innerHTML = ''; return; }
+        var n = spec[0], cls = spec[1], seed = FXSEED[type] || 1, h = '';
+        for (var i = 0; i < n; i++) {
+            var left  = (prnd(seed + i * 4 + 1) * 100).toFixed(1);
+            var delay = (prnd(seed + i * 4 + 2) * 4).toFixed(2);
+            var dur   = (2.2 + prnd(seed + i * 4 + 3) * 3.2).toFixed(2);
+            var size  = (2 + prnd(seed + i * 4 + 4) * 2.6).toFixed(1);
+            // 负 delay：页面一打开粒子就已经在动，不必先等几秒空窗
+            // 雾带是横贯卡片的整条，用 CSS 里的固定 left，不参与随机分布
+            var style = 'animation-delay:-' + delay + 's;' +
+                        'animation-duration:' + dur + 's;--p-size:' + size + 'px';
+            if (cls !== 'fog') style = 'left:' + left + '%;' + style;
+            if (cls === 'star' || cls === 'cloud' || cls === 'fog' || cls === 'glow') {
+                style += ';top:' + (10 + prnd(seed + i * 4 + 5) * 72).toFixed(1) + '%';
+            }
+            h += '<i class="jg-w-p jg-w-p-' + cls + '" style="' + style + '"></i>';
+        }
+        fx.innerHTML = h;
+    }
+    // 数据到位后重播分层入场；强制 reflow 让动画能连续触发
+    function replay(box) {
+        if (reducedMotion()) { box.classList.remove('jg-w-anim'); return; }
+        box.classList.remove('jg-w-anim');
+        void box.offsetWidth;
+        box.classList.add('jg-w-anim');
+        // 兜底：入场动画是 backwards 延迟播放，若引擎把动画节流/冻结在首帧，
+        // 文字会一直停在 opacity:0。超时后直接摘掉类，回到默认可见样式。
+        clearTimeout(box._jgAnimTimer);
+        box._jgAnimTimer = setTimeout(function () {
+            box.classList.remove('jg-w-anim');
+        }, 1400);
+    }
+    // 温度数字从略低的值滚到实测值（与 temp-pop 一起构成「活」的感觉）
+    function countUp(el, target) {
+        if (!el || typeof target !== 'number' || !isFinite(target)) return;
+        if (reducedMotion() || !window.requestAnimationFrame) return;
+        var node = el.firstChild;
+        if (!node || node.nodeType !== 3) return;
+        var from = Math.round(target * .55), t0 = null, dur = 620;
+        function step(ts) {
+            if (t0 === null) t0 = ts;
+            var p = Math.min(1, (ts - t0) / dur);
+            var e = 1 - Math.pow(1 - p, 3);
+            node.nodeValue = String(Math.round(from + (target - from) * e));
+            if (p < 1) requestAnimationFrame(step);
+        }
+        requestAnimationFrame(step);
+    }
+
     function render(box, d) {
         var type = wtype(d.code, d.is_day);
         box.setAttribute('data-wtype', type);
@@ -98,11 +175,17 @@
                 '<span>今日 <b>' + range + '</b></span>' +
             '</div>' +
             '<div class="jg-w-foot">' + foot + '</div>';
+
+        buildFx(box, type);
+        replay(box);
+        if (typeof temp === 'number') countUp(box.querySelector('.jg-w-temp'), temp);
     }
     function showError(box, msg) {
         box.querySelector('.jg-w-body').innerHTML =
             '<div class="jg-w-error"><span>' + esc(msg || '天气获取失败') + '</span>' +
             '<a class="jg-w-retry">点击重试</a></div>';
+        var fx = box.querySelector('.jg-w-fx');
+        if (fx) fx.innerHTML = '';
     }
     function load(force) {
         var box = document.getElementById(ID);
@@ -134,7 +217,9 @@
         var sec = document.createElement('section');
         sec.id = ID;
         sec.className = 'widget widget_categories wrapper-md padder-v-none clear box-shadow-wrap-normal';
-        sec.innerHTML = '<div class="jg-w-bar"></div>' +
+        sec.innerHTML = '<div class="jg-w-fx" aria-hidden="true"></div>' +
+            '<div class="jg-w-sweep" aria-hidden="true"></div>' +
+            '<div class="jg-w-bar"></div>' +
             '<h5 class="widget-title m-t-none">天气<span class="jg-w-city">…</span>' +
             '<button class="jg-w-refresh" type="button" title="刷新天气" aria-label="刷新天气">↻</button></h5>' +
             '<div class="jg-w-body"></div>';
@@ -169,6 +254,11 @@
             });
             mo.observe(document.body, { childList: true, subtree: true });
         }
+        // 页面切到后台时暂停循环动画
+        document.addEventListener('visibilitychange', function () {
+            var b = document.getElementById(ID);
+            if (b) b.classList.toggle('jg-w-paused', document.hidden);
+        });
     }
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
     else init();
