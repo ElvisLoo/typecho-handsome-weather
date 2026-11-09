@@ -9,9 +9,11 @@
     color: var(--text-color, #666);
     font-size: 13px;
     line-height: 1.5;
-    transition: box-shadow .3s ease, transform .3s ease;
+    transition: box-shadow .3s ease;
+    /* 常驻提升为合成层：静止态与悬停态渲染路径一致，避免粒子层动画造成 1px 亚像素缝 */
+    transform: translateZ(0);
 }
-#jg-weather:hover { transform: translateY(-2px); box-shadow: 0 6px 18px rgba(60, 80, 66, .10); }
+#jg-weather:hover { box-shadow: 0 6px 18px rgba(60, 80, 66, .10); }
 #jg-weather > h5.widget-title,
 #jg-weather > .jg-w-body { position: relative; z-index: 2; }
 
@@ -302,18 +304,15 @@
 #jg-weather .jg-w-foot .jg-w-stale { color: #c08a5a; }
 
 /* ---------- 数据到位后的分层入场 ---------- */
-#jg-weather.jg-w-anim > h5.widget-title   { animation: jg-w-slide-down .5s ease .05s backwards; }
-#jg-weather.jg-w-anim .jg-w-main          { animation: jg-w-slide-up .5s ease .14s backwards; }
-#jg-weather.jg-w-anim .jg-w-temp          { animation: jg-w-temp-pop .55s cubic-bezier(.22,.61,.36,1) .24s backwards; }
-#jg-weather.jg-w-anim .jg-w-details span:nth-child(1) { animation: jg-w-chip-in .45s ease .32s backwards; }
-#jg-weather.jg-w-anim .jg-w-details span:nth-child(2) { animation: jg-w-chip-in .45s ease .40s backwards; }
-#jg-weather.jg-w-anim .jg-w-details span:nth-child(3) { animation: jg-w-chip-in .45s ease .48s backwards; }
-#jg-weather.jg-w-anim .jg-w-foot          { animation: jg-w-fade .5s ease .54s backwards; }
-@keyframes jg-w-slide-down { 0% { opacity: 0; transform: translateY(-8px); } 100% { opacity: 1; transform: translateY(0); } }
-@keyframes jg-w-slide-up   { 0% { opacity: 0; transform: translateY(12px); } 100% { opacity: 1; transform: translateY(0); } }
+/* 入场只做透明度渐显，不做任何位移（用户要求：控件不许上下移动） */
+#jg-weather.jg-w-anim > h5.widget-title   { animation: jg-w-fade .45s ease .05s backwards; }
+#jg-weather.jg-w-anim .jg-w-main          { animation: jg-w-fade .50s ease .14s backwards; }
+#jg-weather.jg-w-anim .jg-w-temp          { animation: jg-w-fade .50s ease .24s backwards; }
+#jg-weather.jg-w-anim .jg-w-details span:nth-child(1) { animation: jg-w-fade .45s ease .32s backwards; }
+#jg-weather.jg-w-anim .jg-w-details span:nth-child(2) { animation: jg-w-fade .45s ease .40s backwards; }
+#jg-weather.jg-w-anim .jg-w-details span:nth-child(3) { animation: jg-w-fade .45s ease .48s backwards; }
+#jg-weather.jg-w-anim .jg-w-foot          { animation: jg-w-fade .50s ease .54s backwards; }
 @keyframes jg-w-fade       { 0% { opacity: 0; } 100% { opacity: 1; } }
-@keyframes jg-w-temp-pop   { 0% { opacity: 0; transform: scale(.72); } 60% { transform: scale(1.08); } 100% { opacity: 1; transform: scale(1); } }
-@keyframes jg-w-chip-in    { 0% { opacity: 0; transform: translateY(8px) scale(.95); } 100% { opacity: 1; transform: translateY(0) scale(1); } }
 
 /* ---------- 加载 / 错误态 ---------- */
 #jg-weather .jg-w-loading,
