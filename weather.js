@@ -52,8 +52,6 @@
                '" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + body + '</svg>';
     }
     function looksDark() {
-        // Handsome 的暗色模式固定给 <html> 加 .theme-dark（dark_setting=auto 时也走这个）
-        // 不能用 body 背景色猜：它常是透明 rgba(0,0,0,0)，会被误判成深色
         var h = document.documentElement;
         if (h.classList && h.classList.contains('theme-dark')) return true;
         var cls = (h.className || '') + ' ' + (document.body.className || '');
@@ -75,7 +73,6 @@
     }
 
     /* ---------- 动效层：按天气类型生成粒子 ---------- */
-    // 确定性伪随机：同一天气每次刷新位置一致，不会跳变，也便于回归测试
     function prnd(k) {
         var x = Math.sin(k * 127.1 + 311.7) * 43758.5453;
         return x - Math.floor(x);
@@ -102,8 +99,6 @@
             var delay = (prnd(seed + i * 4 + 2) * 4).toFixed(2);
             var dur   = (2.2 + prnd(seed + i * 4 + 3) * 3.2).toFixed(2);
             var size  = (2 + prnd(seed + i * 4 + 4) * 2.6).toFixed(1);
-            // 负 delay：页面一打开粒子就已经在动，不必先等几秒空窗
-            // 雾带是横贯卡片的整条，用 CSS 里的固定 left，不参与随机分布
             var style = 'animation-delay:-' + delay + 's;' +
                         'animation-duration:' + dur + 's;--p-size:' + size + 'px';
             if (cls !== 'fog') style = 'left:' + left + '%;' + style;
@@ -114,20 +109,16 @@
         }
         fx.innerHTML = h;
     }
-    // 数据到位后重播分层入场；强制 reflow 让动画能连续触发
     function replay(box) {
         if (reducedMotion()) { box.classList.remove('jg-w-anim'); return; }
         box.classList.remove('jg-w-anim');
         void box.offsetWidth;
         box.classList.add('jg-w-anim');
-        // 兜底：入场动画是 backwards 延迟播放，若引擎把动画节流/冻结在首帧，
-        // 文字会一直停在 opacity:0。超时后直接摘掉类，回到默认可见样式。
         clearTimeout(box._jgAnimTimer);
         box._jgAnimTimer = setTimeout(function () {
             box.classList.remove('jg-w-anim');
         }, 1400);
     }
-    // 温度数字从略低的值滚到实测值（与 temp-pop 一起构成「活」的感觉）
     function countUp(el, target) {
         if (!el || typeof target !== 'number' || !isFinite(target)) return;
         if (reducedMotion() || !window.requestAnimationFrame) return;
@@ -187,6 +178,12 @@
         var fx = box.querySelector('.jg-w-fx');
         if (fx) fx.innerHTML = '';
     }
+    // 网络失败回退缓存时，明确标出这是旧数据，避免看起来像刚刷新的
+    function markOffline(box) {
+        var f = box.querySelector('.jg-w-foot');
+        if (!f || f.querySelector('.jg-w-offline')) return;
+        f.innerHTML += ' <span class="jg-w-stale jg-w-offline">（离线，显示上次数据）</span>';
+    }
     function load(force) {
         var box = document.getElementById(ID);
         if (!box) return;
@@ -199,7 +196,15 @@
         }
         body.innerHTML = '<div class="jg-w-loading"><i></i><span>正在获取天气…</span></div>';
         var url = ENDPOINT + '?' + (force ? 'force=1&' : '') + 't=' + Date.now();
-        fetch(url, { cache: 'no-store', credentials: 'same-origin' })
+        // 弱网 / 上游挂掉时 fetch 会一直挂着，卡片永远转圈。12 秒无响应就中断，走下面的 catch。
+        var ctrl = null;
+        try {
+            if (typeof AbortController !== 'undefined') {
+                ctrl = new AbortController();
+                setTimeout(function () { try { ctrl.abort(); } catch (e) {} }, 12000);
+            }
+        } catch (e) {}
+        fetch(url, { cache: 'no-store', credentials: 'same-origin', signal: ctrl ? ctrl.signal : undefined })
             .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
             .then(function (d) {
                 if (!d || !d.ok) throw new Error((d && d.error) || '天气数据异常');
@@ -207,8 +212,8 @@
                 render(box, d);
             })
             .catch(function (e) {
-                if (cached && cached.data) render(box, cached.data);
-                else showError(box, e.message);
+                if (cached && cached.data) { render(box, cached.data); markOffline(box); }
+                else showError(box, (e && e.name === 'AbortError') ? '获取超时，请点击重试' : (e && e.message));
             });
     }
     function mount() {
@@ -241,6 +246,20 @@
     }
     function init() {
         mount();
+        /* JG-WEATHER-SYNC-START */
+        /* 三态切换只改 html.theme-dark；render() 只在取天气时跑一次，
+           若不主动同步，深色切回浅色后 .jg-dark 残留会让深色底一直压着。 */
+        function syncTheme() {
+            var b = document.getElementById(ID);
+            if (b) b.classList.toggle('jg-dark', looksDark());
+        }
+        if (window.MutationObserver) {
+            new MutationObserver(syncTheme).observe(document.documentElement,
+                { attributes: true, attributeFilter: ['class'] });
+        }
+        document.addEventListener('pjax:end', function () { setTimeout(syncTheme, 60); });
+        syncTheme();
+        /* JG-WEATHER-SYNC-END */
         ['pjax:end', 'pjax:complete'].forEach(function (ev) {
             document.addEventListener(ev, function () { setTimeout(mount, 80); });
         });
@@ -254,7 +273,6 @@
             });
             mo.observe(document.body, { childList: true, subtree: true });
         }
-        // 页面切到后台时暂停循环动画
         document.addEventListener('visibilitychange', function () {
             var b = document.getElementById(ID);
             if (b) b.classList.toggle('jg-w-paused', document.hidden);

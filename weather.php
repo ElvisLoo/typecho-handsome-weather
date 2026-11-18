@@ -7,13 +7,19 @@
  *
  * 安全：不接收客户端传入的坐标/URL，IP 先经 filter_var 校验才拼进上游地址，
  *       坐标只接受第三方返回的合法数值，无 SSRF / 参数注入面。
+ *       转发头（EO-Connecting-IP 等）只在 REMOTE_ADDR 命中 $TRUSTED_PROXIES 时采信，
+ *       防止伪造头污染缓存 / 刷上游；另按 IP 段限流。
  * 降级：定位失败 → 回退常量坐标；上游失败 → 返回旧缓存（stale）；再不行才报错。
  * 时区：timezone=auto，境外访客的「今日高低温 / 更新时间」按当地算。
  *
  * 用法：放到 Typecho 站点根目录，只改下面 $FALLBACK_* 三个常量即可。
  * 许可：Open-Meteo 免费档限非商业用途且每日调用低于 10000 次。
- *       核对日期：2026-11-06
+ *       核对日期：2026-11-06（PHP 8.5 兼容修复：2026-11-12）
  */
+// PHP 8.5 会把 Deprecated / Warning 以 "<br /><b>..." 混进响应体，污染 JSON。
+// 接口只认纯 JSON；错误仍写入 error_log，不回显给浏览器。
+ini_set('display_errors', '0');
+
 header('Content-Type: application/json; charset=utf-8');
 header('Cache-Control: no-store, no-cache, must-revalidate, private');
 header('Pragma: no-cache');
@@ -28,7 +34,15 @@ $FALLBACK_LON  = 116.4074;
 
 $TTL      = 900;    // 天气缓存 15 分钟
 $GEO_TTL  = 86400;  // IP 段定位结果缓存 24 小时
-$GEO_FILE = sys_get_temp_dir() . '/jg_geo_prefix_v1.json';
+$GEO_DIR  = sys_get_temp_dir() . '/jg_geo_v2';   // 每个 IP 段一个文件，避免整表读写竞态
+$GEO_FILE = sys_get_temp_dir() . '/jg_geo_prefix_v1.json'; // 旧总表，仅一次性迁移读取
+// 可信 CDN 回源段：只有 REMOTE_ADDR 落在这里面，才采信 EO-Connecting-IP 等转发头。
+// 留空 = 不信任任何转发头（最安全，直连时按 REMOTE_ADDR 定位）。
+// 线上 EdgeOne 回源实测 114.66.247.140，可配 ['114.66.247.0/24']。
+$TRUSTED_PROXIES = [];
+// 每个 IP 段每分钟的定位回源限流（未命中缓存时计数）
+$RATE_MAX    = 30;
+$RATE_WINDOW = 60;
 
 function emit($a) { echo json_encode($a, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES); exit; }
 
@@ -46,7 +60,8 @@ function wmo_desc($c) {
 }
 function wind_dir($d) {
     $dirs = ['北', '东北', '东', '东南', '南', '西南', '西', '西北'];
-    return $dirs[(int)round(((float)$d % 360) / 45) % 8];
+    // 以方位角为中心 ±22.5° 归属，比 round() 更贴合气象惯例
+    return $dirs[(int)floor((((float)$d % 360) + 22.5) / 45) % 8];
 }
 function http_get($url, $timeout) {
     if (function_exists('curl_init')) {
@@ -60,7 +75,7 @@ function http_get($url, $timeout) {
         ]);
         $raw = curl_exec($ch);
         if (curl_errno($ch)) $raw = null;
-        curl_close($ch);
+        // PHP 8.5: curl_close() 已废弃（自 8.0 起无实际效果），句柄随作用域自动释放
         return $raw;
     }
     $ctx = stream_context_create(['http' => [
@@ -77,8 +92,44 @@ function public_ip($s) {
     if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE) === false) return '';
     return $ip;
 }
-/** EdgeOne: EO-Connecting-IP / X-Forwarded-For 是访客，REMOTE_ADDR 是 CDN 节点 */
+/** CIDR 归属判断（IPv4/IPv6），用于识别可信 CDN 回源 IP */
+function ip_in_cidr($ip, $cidr) {
+    if (strpos($cidr, '/') === false) return false;
+    list($net, $bits) = explode('/', $cidr, 2);
+    $bits = (int)$bits;
+    $ipP = @inet_pton($ip);
+    $netP = @inet_pton($net);
+    if ($ipP === false || $netP === false) return false;
+    if (strlen($ipP) !== strlen($netP)) return false;
+    $bytes = intdiv($bits, 8);
+    $rem = $bits % 8;
+    if ($bytes && substr($ipP, 0, $bytes) !== substr($netP, 0, $bytes)) return false;
+    if ($rem) {
+        $mask = chr((0xFF << (8 - $rem)) & 0xFF);
+        if ((ord($ipP[$bytes]) & ord($mask)) !== (ord($netP[$bytes]) & ord($mask))) return false;
+    }
+    return true;
+}
+function is_trusted_proxy($ip) {
+    global $TRUSTED_PROXIES;
+    if ($ip === '') return false;
+    foreach ($TRUSTED_PROXIES as $c) {
+        if (ip_in_cidr($ip, $c)) return true;
+    }
+    return false;
+}
+/**
+ * 取访客 IP。转发头（EO-Connecting-IP / X-Forwarded-For…）可被任意伪造，
+ * 只有当回源 IP 落在可信 CDN 段内才采信；公网直连一律以 REMOTE_ADDR 为准，
+ * 否则伪造头能污染 IP 段缓存（24h）并刷爆上游配额。
+ * 本机 / 内网自检（REMOTE_ADDR 为私网）仍按原顺序采信转发头。
+ */
 function client_ip() {
+    $remote = (string)($_SERVER['REMOTE_ADDR'] ?? '');
+    $remotePub = public_ip($remote);
+    if ($remotePub !== '' && !is_trusted_proxy($remotePub)) {
+        return $remotePub; // 公网直连且非可信回源：不信任任何转发头
+    }
     $keys = ['HTTP_EO_CONNECTING_IP', 'HTTP_CF_CONNECTING_IP', 'HTTP_X_FORWARDED_FOR',
              'HTTP_X_REAL_IP', 'REMOTE_ADDR'];
     foreach ($keys as $k) {
@@ -111,17 +162,42 @@ function geo_all() {
     $a = $raw ? json_decode($raw, true) : null;
     return is_array($a) ? $a : [];
 }
-function geo_put($key, $val) {
-    global $GEO_FILE, $GEO_TTL;
+function geo_file($key) {
+    global $GEO_DIR;
+    return $GEO_DIR . '/' . md5($key) . '.json';
+}
+function geo_get($key) {
+    $d = @json_decode(@file_get_contents(geo_file($key)), true);
+    if (is_array($d)) return $d;
+    // 兼容旧总表：只读取该 key，不写回总表
     $all = geo_all();
+    return $all[$key] ?? null;
+}
+function geo_gc() {
+    global $GEO_DIR, $GEO_TTL;
     $now = time();
-    foreach ($all as $k => $v) {
-        if (!is_array($v) || ($now - (int)($v['ts'] ?? 0)) > $GEO_TTL) unset($all[$k]);
+    foreach (glob($GEO_DIR . '/*.json') ?: [] as $f) {
+        $d = @json_decode(@file_get_contents($f), true);
+        if (is_array($d) && ($now - (int)($d['ts'] ?? 0)) > $GEO_TTL) @unlink($f);
     }
-    if (count($all) > 1500) $all = array_slice($all, -1500, null, true);
-    $val['ts'] = $now;
-    $all[$key] = $val;
-    @file_put_contents($GEO_FILE, json_encode($all, JSON_UNESCAPED_UNICODE), LOCK_EX);
+}
+function geo_put($key, $val) {
+    global $GEO_DIR;
+    @is_dir($GEO_DIR) || @mkdir($GEO_DIR, 0755, true);
+    $val['ts'] = time();
+    @file_put_contents(geo_file($key), json_encode($val, JSON_UNESCAPED_UNICODE), LOCK_EX);
+    // 概率清理过期文件，控制目录体积
+    if (function_exists('random_int') && random_int(1, 100) === 1) geo_gc();
+}
+/** 按 IP 段的本地限流：窗口内累计超过 $max 次返回 true */
+function rate_limit_hit($key, $max, $window) {
+    $f = sys_get_temp_dir() . '/jg_rl_' . md5($key) . '.json';
+    $now = time();
+    $d = @json_decode(@file_get_contents($f), true);
+    if (!is_array($d) || ($now - (int)($d['t'] ?? 0)) >= $window) $d = ['t' => $now, 'n' => 0];
+    $d['n']++;
+    @file_put_contents($f, json_encode($d), LOCK_EX);
+    return $d['n'] > $max;
 }
 /**
  * 国标行政区划码前 2 位 → ipwho.is 的 region_code。
@@ -196,7 +272,8 @@ function city_name($en, $country, $ip, $regionCode, $usePconline) {
 }
 /** 主 ipwho.is（HTTPS/免 key/带坐标），备 ipinfo.io；都失败返回 null */
 function locate($ip) {
-    $j = json_decode(http_get('https://ipwho.is/' . rawurlencode($ip), 4), true);
+    $geoRaw = http_get('https://ipwho.is/' . rawurlencode($ip), 4);
+    $j = is_string($geoRaw) ? json_decode($geoRaw, true) : null;
     if (is_array($j) && !empty($j['success'])
         && is_numeric($j['latitude'] ?? null) && is_numeric($j['longitude'] ?? null)) {
         return [
@@ -212,7 +289,8 @@ function locate($ip) {
             'geo'  => 'ipwho.is',
         ];
     }
-    $j = json_decode(http_get('https://ipinfo.io/' . rawurlencode($ip) . '/json', 4), true);
+    $geoRaw2 = http_get('https://ipinfo.io/' . rawurlencode($ip) . '/json', 4);
+    $j = is_string($geoRaw2) ? json_decode($geoRaw2, true) : null;
     if (is_array($j) && isset($j['loc']) && strpos($j['loc'], ',') !== false) {
         list($la, $lo) = explode(',', $j['loc'], 2);
         if (is_numeric($la) && is_numeric($lo)) {
@@ -233,11 +311,13 @@ $geo    = null;
 $cachedGeo = null;
 if ($ip !== '') {
     $key = ip_prefix($ip);
-    $all = geo_all();
-    $g = $all[$key] ?? null;
+    $g = geo_get($key);
     if (is_array($g) && (time() - (int)($g['ts'] ?? 0)) < $GEO_TTL) {
         $cachedGeo = $g;
     } else {
+        if (rate_limit_hit('geo:' . $key, $RATE_MAX, $RATE_WINDOW)) {
+            emit(['ok' => 0, 'error' => '请求过于频繁，请稍后再试']);
+        }
         $g = locate($ip);
         if ($g && abs($g['lat']) <= 90 && abs($g['lon']) <= 180) {
             $geo = $g;

@@ -18,8 +18,9 @@
 
 | 环节 | 做法 |
 | --- | --- |
-| 取真实 IP | 优先 `EO-Connecting-IP`（EdgeOne）、`CF-Connecting-IP`、`X-Forwarded-For`、`X-Real-IP`，最后才 `REMOTE_ADDR` |
-| 为什么 | 站点前面有 CDN 时 `REMOTE_ADDR` 是**边缘节点**的 IP，不是访客的。实测回源头里 `EO-Connecting-IP = 153.37.203.176`、`REMOTE_ADDR = 114.66.247.140`，用后者定位会全站显示同一个城市 |
+| 取真实 IP | 先看 `REMOTE_ADDR`：只有它落在 `$TRUSTED_PROXIES` 配置的 CDN 回源段内，才继续采信 `EO-Connecting-IP`（EdgeOne）/ `CF-Connecting-IP` / `X-Forwarded-For` / `X-Real-IP`；否则一律用 `REMOTE_ADDR` |
+| 为什么 | 这些转发头可被任意伪造。若源站暴露公网，攻击者 `curl -H 'EO-Connecting-IP: 8.8.8.8'` 就能把错误位置写进 24h 的 IP 段缓存，或伪造海量 IP 绕过坐标桶刷上游配额。实测回源头 `EO-Connecting-IP=153.37.203.176`、`REMOTE_ADDR=114.66.247.140`，所以把 `114.66.247.0/24` 配进 `$TRUSTED_PROXIES` 才采信头；留空则完全不信任转发头（最安全） |
+| 自检兼容 | 本机 / 内网直连时 `REMOTE_ADDR` 是私网地址，仍按原顺序采信转发头，方便 `curl -H 'EO-Connecting-IP: …' 127.0.0.1/weather.php` 验证 |
 | 主定位源 | `ipwho.is/{ip}`，HTTPS、免 Key、直接给 `latitude` / `longitude` |
 | 备用源 | `ipinfo.io/{ip}/json`，用 `loc` 字段的 `lat,lon` |
 | 中文城市名 | `whois.pconline.com.cn` 返回 GBK，转 UTF-8 后取 `city`；境外 IP 保留英文城市名，常见城市有内置映射 |
@@ -30,8 +31,9 @@
 
 ### 两级缓存
 
-- **IP 段 → 位置**：按 IPv4 前 3 段 / IPv6 前 4 组做 key，缓存 24 小时。同城同段没必要反复查定位接口；缓存里只留段前缀，不存完整 IP。
-- **坐标 → 天气**：按 `round(lat,3),round(lon,3)` 做 key，缓存 15 分钟。不同城市各自一份，不会互相覆盖。
+- **IP 段 → 位置**：按 IPv4 前 3 段 / IPv6 前 4 组做 key，**每个 key 一个独立小文件**（`jg_geo_v2/<md5>.json`），缓存 24 小时。不再读写整张总表，避免并发下互相覆盖；旧 `jg_geo_prefix_v1.json` 只在迁移时读一次。缓存里只留段前缀，不存完整 IP。
+- **坐标 → 天气**：按 `round(lat,3),round(lon,3)` 做 key，每坐标一个文件，缓存 15 分钟。不同城市各自一份，不会互相覆盖。
+- **限流**：每个 IP 段每分钟最多 30 次定位回源（未命中缓存时计数），超限直接返回 `ok:0`，防止公开端点被扫爆上游。
 
 `/weather.php` 输出 `Cache-Control: no-store, private` 并带 `Vary: EO-Connecting-IP, X-Forwarded-For`。实测 EdgeOne 对该路径是 `EO-Cache-Status: MISS`，没有串味；万一以后 CDN 规则改成按 URL 缓存，`Vary` 也能兜住。
 
@@ -168,10 +170,16 @@ IP 定位拿到的是**运营商出口**位置，精度到城市级，移动网�
 - **PJAX 换页会冲掉卡片**。监听 `pjax:end` / `pjax:complete`，再加 `MutationObserver` 兜底重挂。
 - **动效要搬机制，别搬皮**。原站是紫色玻璃拟态渐变卡 + 雨雪粒子 + 温度滚动数字；一开始我把这些全去掉了，后来又按同样的机制做了一套 Handsome 配色版：粒子层、分层入场、扫光、图标自转都保留，颜色全部换成 grass 灰绿，透明度压到不干扰正文。卡片外观仍是白底、6px 圆角、细阴影、内联 SVG 图标，顶部渐变条按 WMO 天气码微调。详见「动效」一节。
 - **上游挂掉要能用**。缓存过期但回源失败时，返回旧数据并标 `stale=1`；定位源全挂时回退常量坐标并标 `fallback=1`；完全没缓存才显示重试入口。
+- **前端 fetch 要设超时**。原来 `fetch` 没有超时，弱网或 `/weather.php` 卡住时卡片会一直停在「正在获取天气…」。现在 12 秒无响应就 `AbortController` 中断，显示「获取超时，请点击重试」；有缓存时仍然先渲染缓存。
+- **转发头不能无条件信任**。公开端点任何人都能直连源站伪造 `EO-Connecting-IP`，把错误位置写进 24h 的 IP 段缓存，或伪造海量 IP 绕过坐标桶刷 Open-Meteo 配额。现在只有 `REMOTE_ADDR` 落在 `$TRUSTED_PROXIES`（CDN 回源段）才采信转发头，公网直连一律以 `REMOTE_ADDR` 为准。
+- **整表缓存有读写竞态**。原来定位缓存是「读整个 JSON → 内存改 → 整份写回」，`file_put_contents` 的 `LOCK_EX` 只锁写、读没锁，并发会互相覆盖。改成每 IP 段一个独立小文件，读写粒度对齐，顺带省掉 1500 条裁剪。
+- **风向方位角要按 ±22.5° 归属**。`round($d/45)` 会让 22.5° 判成「东北」而气象惯例是「北」，改成 `floor(($d+22.5)/45)%8`。
+- **离线回退缓存要明示**。fetch 失败且有本地缓存时，现在会在脚注追加「（离线，显示上次数据）」，避免用户以为数据是刚刷新的。
+- **PHP 8.5 会把警告混进 JSON**。8.5 起 `display_errors` 的输出格式带上 `<br /><b>`，`curl_close()` 这类废弃警告会直接拼在响应体里，`json_decode` 失败、前端一直转圈。现在 `weather.php` 顶部 `ini_set('display_errors','0')`（错误仍进 `error_log`），并移除了 `curl_close()`（8.0 起已无实际效果）。定位响应也先判 `is_string()` 再 `json_decode`，上游返回空/非字符串时不会硬解。
 
 ## 已验证环境
 
-Typecho 1.3.0 + Handsome 10.1.0 + PHP 8.2 + EdgeOne CDN，桌面与移动宽度、浅色与暗色模式、首页 / 文章页 / 独立页面、PJAX 换页。八种天气类型的粒子与图标动画逐个截图核对过（晴 / 多云 / 阴 / 雾 / 雨 / 雪 / 雷雨 / 夜）。境内服务器实测 `ipwho.is` 0.58s、`pconline` 0.18s、`ipinfo.io` 1.37s、Open-Meteo 0.79s 均可直连。其他 Typecho / Handsome 版本未逐个验证；主题目录名不是 `handsome` 时改 `install.php` 顶部的 `OPTION_NAME`。没有 CDN 时 `REMOTE_ADDR` 优先级兜底仍然可用。
+Typecho 1.3.0 + Handsome 10.1.0 + PHP 8.2 / 8.5 + EdgeOne CDN，桌面与移动宽度、浅色与暗色模式、首页 / 文章页 / 独立页面、PJAX 换页。八种天气类型的粒子与图标动画逐个截图核对过（晴 / 多云 / 阴 / 雾 / 雨 / 雪 / 雷雨 / 夜）。境内服务器实测 `ipwho.is` 0.58s、`pconline` 0.18s、`ipinfo.io` 1.37s、Open-Meteo 0.79s 均可直连。其他 Typecho / Handsome 版本未逐个验证；主题目录名不是 `handsome` 时改 `install.php` 顶部的 `OPTION_NAME`。没有 CDN 时把 `$TRUSTED_PROXIES` 留空，直接按 `REMOTE_ADDR` 定位即可。
 
 ---
 
