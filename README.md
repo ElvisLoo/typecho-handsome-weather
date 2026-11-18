@@ -1,3 +1,5 @@
+> **已并入总仓** [ElvisLoo/typecho-handsome-widgets](https://github.com/ElvisLoo/typecho-handsome-widgets)，本仓保留、仍可单独 clone。
+
 # Typecho Handsome 天气控件
 
 给 Typecho 的 Handsome 主题加一个右侧栏天气卡片：**零模板改动、零 API Key、零第三方私有接口**。每个访客看到的是自己那儿的天气，卡片还会跟着天气动起来——雨会落、雪会飘、晴天的太阳光芒会慢慢转。
