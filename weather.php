@@ -12,6 +12,10 @@
  * 降级：定位失败 → 回退常量坐标；上游失败 → 返回旧缓存（stale）；再不行才报错。
  * 时区：timezone=auto，境外访客的「今日高低温 / 更新时间」按当地算。
  *
+ * 返回字段：current（实时）/ daily（今天起 3 天，含 weather_code、高低温、降水概率）
+ *           / hourly（当前小时起 24 小时温度）/ aqi（PM2.5、PM10、US AQI，取不到时为 null）。
+ *           AQI 走独立上游与独立缓存（30 分钟），失败静默降级，不拖累主天气。
+ *
  * 用法：放到 Typecho 站点根目录，只改下面 $FALLBACK_* 三个常量即可。
  * 许可：Open-Meteo 免费档限非商业用途且每日调用低于 10000 次。
  *       核对日期：2026-11-06（PHP 8.5 兼容修复：2026-11-12）
@@ -57,6 +61,11 @@ function wmo_desc($c) {
         95 => '雷雨', 96 => '雷雨伴小冰雹', 97 => '强雷雨', 99 => '雷雨伴大冰雹',
     ];
     return isset($m[$c]) ? $m[$c] : '未知';
+}
+/** 四舍五入并归零 -0（json_encode 会把 -0.0 写成 -0，前端就会显示成「-0°」） */
+function rzero($v, $prec = 0) {
+    $r = round((float)$v, $prec);
+    return $r == 0 ? 0 : $r;
 }
 function wind_dir($d) {
     $dirs = ['北', '东北', '东', '东南', '南', '西南', '西', '西北'];
@@ -359,17 +368,97 @@ if (!$forceOk && is_array($old) && isset($old['_fetched']) && (time() - $old['_f
     emit($old);
 }
 
+// ---------- 2.5 空气质量（AQI）----------
+// 独立上游 + 独立缓存：失败时静默降级（$aqi 为 null，前端隐藏该区块），不影响主天气。
+$AQI_TTL = 1800;   // 空气缓存 30 分钟（比天气变化慢，省一次上游调用）
+function aqi_level($v) {
+    if ($v <= 50)  return ['优',   '#4c8a67'];
+    if ($v <= 100) return ['良',   '#8a9a3c'];
+    if ($v <= 150) return ['轻度', '#c08a3e'];
+    if ($v <= 200) return ['中度', '#b45a4a'];
+    if ($v <= 300) return ['重度', '#8b6a9c'];
+    return ['严重', '#7a3b45'];
+}
+function fetch_aqi($lat, $lon) {
+    global $AQI_TTL;
+    $cache = sys_get_temp_dir() . '/jg_air_' . md5($lat . ',' . $lon) . '.json';
+    $d = @json_decode(@file_get_contents($cache), true);
+    $fresh = is_array($d) && isset($d['us_aqi']) && (time() - (int)($d['_fetched'] ?? 0)) < $AQI_TTL;
+    if (!$fresh) {
+        $raw = http_get('https://air-quality-api.open-meteo.com/v1/air-quality?latitude=' . $lat
+            . '&longitude=' . $lon . '&current=pm2_5,pm10,us_aqi&timezone=auto', 6);
+        $j = $raw ? json_decode($raw, true) : null;
+        if (is_array($j) && isset($j['current']['us_aqi'])) {
+            $d = [
+                'pm25'   => isset($j['current']['pm2_5']) ? round((float)$j['current']['pm2_5'], 1) : null,
+                'pm10'   => isset($j['current']['pm10']) ? round((float)$j['current']['pm10'], 1) : null,
+                'us_aqi' => (int)$j['current']['us_aqi'],
+            ];
+            $d['_fetched'] = time();
+            @file_put_contents($cache, json_encode($d, JSON_UNESCAPED_UNICODE), LOCK_EX);
+        }
+    }
+    if (is_array($d) && isset($d['us_aqi'])) {
+        unset($d['_fetched']);
+        $lv = aqi_level((int)$d['us_aqi']);
+        $d['level'] = $lv[0];
+        $d['color'] = $lv[1];
+        return $d;
+    }
+    return null;
+}
+
 // timezone=auto：Open-Meteo 按坐标选当地时区，境外访客的高低温与更新时间才对
 $url = 'https://api.open-meteo.com/v1/forecast'
      . '?latitude=' . $LAT . '&longitude=' . $LON
      . '&current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,is_day,wind_speed_10m,wind_direction_10m'
-     . '&daily=temperature_2m_max,temperature_2m_min'
-     . '&timezone=auto&forecast_days=1';
+     . '&hourly=temperature_2m,weather_code'
+     . '&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max'
+     . '&timezone=auto&forecast_days=3';
 
 $raw = http_get($url, 9);
 $j   = $raw ? json_decode($raw, true) : null;
 if (is_array($j) && isset($j['current']['temperature_2m'])) {
     $c = $j['current'];
+
+    /* 未来 3 天（今天 / 明天 / 后天） */
+    $daily = [];
+    if (isset($j['daily']['time']) && is_array($j['daily']['time'])) {
+        $n = min(3, count($j['daily']['time']));
+        for ($i = 0; $i < $n; $i++) {
+            $dp = explode('-', substr((string)$j['daily']['time'][$i], 0, 10));
+            $daily[] = [
+                'date' => (count($dp) === 3) ? ((int)$dp[1] . '-' . (int)$dp[2]) : (string)$j['daily']['time'][$i],
+                'code' => (int)($j['daily']['weather_code'][$i] ?? 0),
+                'desc' => wmo_desc((int)($j['daily']['weather_code'][$i] ?? 0)),
+                'high' => isset($j['daily']['temperature_2m_max'][$i]) ? rzero($j['daily']['temperature_2m_max'][$i]) : null,
+                'low'  => isset($j['daily']['temperature_2m_min'][$i]) ? rzero($j['daily']['temperature_2m_min'][$i]) : null,
+                'pop'  => isset($j['daily']['precipitation_probability_max'][$i]) ? (int)$j['daily']['precipitation_probability_max'][$i] : null,
+            ];
+        }
+    }
+
+    /* 逐小时：从当前小时起向后取 24 小时 */
+    $hourly = [];
+    if (isset($j['hourly']['time']) && is_array($j['hourly']['time'])) {
+        $times = $j['hourly']['time'];
+        $cur = substr((string)($c['time'] ?? ''), 0, 13);
+        $start = 0;
+        for ($i = 0; $i < count($times); $i++) {
+            if (substr((string)$times[$i], 0, 13) >= $cur) { $start = $i; break; }
+        }
+        $n = min(24, count($times) - $start);
+        for ($i = 0; $i < $n; $i++) {
+            $k = $start + $i;
+            $hourly[] = [
+                'time' => substr((string)$times[$k], 11, 5),
+                'temp' => isset($j['hourly']['temperature_2m'][$k]) ? rzero($j['hourly']['temperature_2m'][$k], 1) : null,
+                'code' => (int)($j['hourly']['weather_code'][$k] ?? 0),
+            ];
+        }
+    }
+
+    $aqi = fetch_aqi($LAT, $LON);
     $day = (string)($j['daily']['time'][0] ?? ($c['time'] ?? ''));
     $dp  = explode('-', substr($day, 0, 10));
     $dateTxt = (count($dp) === 3) ? ((int)$dp[1] . '月' . (int)$dp[2] . '日') : date('n月j日');
@@ -384,8 +473,8 @@ if (is_array($j) && isset($j['current']['temperature_2m'])) {
         'humidity'=> isset($c['relative_humidity_2m']) ? (int)$c['relative_humidity_2m'] : null,
         'wind'    => isset($c['wind_speed_10m']) ? round((float)$c['wind_speed_10m']) : null,
         'winddir' => isset($c['wind_direction_10m']) ? wind_dir($c['wind_direction_10m']) : '',
-        'high'    => isset($j['daily']['temperature_2m_max'][0]) ? round((float)$j['daily']['temperature_2m_max'][0]) : null,
-        'low'     => isset($j['daily']['temperature_2m_min'][0]) ? round((float)$j['daily']['temperature_2m_min'][0]) : null,
+        'high'    => isset($j['daily']['temperature_2m_max'][0]) ? rzero($j['daily']['temperature_2m_max'][0]) : null,
+        'low'     => isset($j['daily']['temperature_2m_min'][0]) ? rzero($j['daily']['temperature_2m_min'][0]) : null,
         'time'    => isset($c['time']) ? substr($c['time'], 11, 5) : date('H:i'),
         'date'    => $dateTxt,
         'source'  => 'Open-Meteo',
@@ -394,6 +483,9 @@ if (is_array($j) && isset($j['current']['temperature_2m'])) {
         'cached'  => 0,
         'stale'   => 0,
         'age'     => 0,
+        'daily'   => $daily,
+        'hourly'  => $hourly,
+        'aqi'     => $aqi,
     ];
     $save = $out; $save['_fetched'] = time();
     @file_put_contents($CACHE, json_encode($save, JSON_UNESCAPED_UNICODE), LOCK_EX);

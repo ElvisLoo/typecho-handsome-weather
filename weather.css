@@ -218,7 +218,9 @@
     transition: color .2s, background .2s, transform .4s;
 }
 #jg-weather .jg-w-refresh:hover { color: #487054; background: rgba(90, 123, 99, .10); }
-#jg-weather .jg-w-refresh.is-spin { transform: rotate(360deg); }
+/* 加载期间持续旋转（原来只是一次性 transition，转半秒就停了，看起来像没反应） */
+#jg-weather .jg-w-refresh.is-spin { animation: jg-w-spin .8s linear infinite; }
+@keyframes jg-w-spin { to { transform: rotate(360deg); } }
 
 #jg-weather .jg-w-main {
     display: flex;
@@ -363,6 +365,91 @@ html.theme-dark #jg-weather .jg-w-details b { color: #b6c6ba; }
 html.theme-dark #jg-weather .jg-w-icon { background: rgba(255,255,255,.06); }
 #jg-weather.jg-dark .jg-w-city,
 html.theme-dark #jg-weather .jg-w-city { background: rgba(143,191,156,.12); color: #9ccbab; }
+#jg-weather.jg-dark .jg-w-forecast,
+#jg-weather.jg-dark .jg-w-hourly,
+#jg-weather.jg-dark .jg-w-fc-item + .jg-w-fc-item,
+html.theme-dark #jg-weather .jg-w-forecast,
+html.theme-dark #jg-weather .jg-w-hourly,
+html.theme-dark #jg-weather .jg-w-fc-item + .jg-w-fc-item { border-color: rgba(255,255,255,.08); }
+#jg-weather.jg-dark .jg-w-fc-d,
+#jg-weather.jg-dark .jg-w-h-head,
+html.theme-dark #jg-weather .jg-w-fc-d,
+html.theme-dark #jg-weather .jg-w-h-head { color: #8c9a91; }
+#jg-weather.jg-dark .jg-w-fc-t b,
+html.theme-dark #jg-weather .jg-w-fc-t b { color: #e0e8e2; }
+#jg-weather.jg-dark .jg-w-fc-t span,
+html.theme-dark #jg-weather .jg-w-fc-t span { color: #8c9a91; }
+#jg-weather.jg-dark .jg-w-fc-pop,
+html.theme-dark #jg-weather .jg-w-fc-pop { color: #7fa8c4; }
+#jg-weather.jg-dark .jg-w-fc-item:hover,
+html.theme-dark #jg-weather .jg-w-fc-item:hover { background: rgba(143, 191, 156, .08); }
+#jg-weather.jg-dark .jg-w-h-scale,
+html.theme-dark #jg-weather .jg-w-h-scale { color: #6f7d74; }
+#jg-weather.jg-dark .jg-w-h-line,
+html.theme-dark #jg-weather .jg-w-h-line { stroke: #8fbf9c; }
+
+/* ---------- 未来 3 天预报 ---------- */
+#jg-weather .jg-w-forecast {
+    display: flex;
+    margin-top: 10px;
+    padding-top: 8px;
+    border-top: 1px solid rgba(90, 123, 99, .12);
+}
+#jg-weather .jg-w-fc-item { flex: 1 1 0; min-width: 0; text-align: center; border-radius: 4px; transition: background .2s ease; }
+#jg-weather .jg-w-fc-item + .jg-w-fc-item { border-left: 1px solid rgba(90, 123, 99, .12); }
+#jg-weather .jg-w-fc-item:hover { background: rgba(90, 123, 99, .06); }
+#jg-weather .jg-w-fc-d { font-size: 11px; color: #7f8c83; }
+#jg-weather .jg-w-fc-i {
+    display: flex; align-items: center; justify-content: center;
+    height: 26px; margin: 2px 0 1px;
+}
+#jg-weather .jg-w-fc-i svg { width: 18px; height: 18px; transition: transform .25s ease; }
+#jg-weather .jg-w-fc-item:hover .jg-w-fc-i svg { transform: scale(1.12); }
+#jg-weather .jg-w-fc-t { font-size: 11px; font-variant-numeric: tabular-nums; }
+#jg-weather .jg-w-fc-t b { font-weight: 600; color: #3d4a41; }
+#jg-weather .jg-w-fc-t span { margin-left: 3px; color: #99a69d; }
+#jg-weather .jg-w-fc-pop { font-size: 10px; line-height: 1.2; color: #638faa; }
+
+/* ---------- 逐小时温度曲线 + AQI ---------- */
+#jg-weather .jg-w-hourly {
+    margin-top: 10px;
+    padding-top: 8px;
+    border-top: 1px solid rgba(90, 123, 99, .12);
+}
+#jg-weather .jg-w-h-head {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 4px;
+    font-size: 11px; color: #7f8c83;
+}
+#jg-weather .jg-w-aqi {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 1px 7px;
+    border-radius: 9px;
+    background: rgba(90, 123, 99, .12);          /* color-mix 不支持时的兼底 */
+    background: color-mix(in srgb, var(--aqi, #4c8a67) 12%, transparent);
+    color: var(--aqi, #4c8a67);
+    font-size: 10.5px;
+    line-height: 16px;
+}
+#jg-weather .jg-w-aqi i { width: 5px; height: 5px; border-radius: 50%; background: var(--aqi, #4c8a67); }
+#jg-weather .jg-w-aqi b { font-weight: 600; }
+#jg-weather .jg-w-h-chart { display: block; width: 100%; height: 46px; overflow: visible; }
+/* 默认可见；仅入场态下从头描绘（.pathLength=100 与 dasharray 对应） */
+#jg-weather .jg-w-h-area { opacity: 1; }
+#jg-weather .jg-w-h-line { stroke-dasharray: 100; stroke-dashoffset: 0; vector-effect: non-scaling-stroke; }
+#jg-weather.jg-w-anim .jg-w-h-line { stroke-dashoffset: 100; animation: jg-w-draw 1s ease .8s forwards; }
+#jg-weather.jg-w-anim .jg-w-h-area { opacity: 0; animation: jg-w-fade .8s ease 1.05s forwards; }
+@keyframes jg-w-draw { to { stroke-dashoffset: 0; } }
+#jg-weather .jg-w-h-scale {
+    display: flex; justify-content: space-between;
+    margin-top: 2px;
+    font-size: 10px; color: #b0bab3;
+    font-variant-numeric: tabular-nums;
+}
+
+/* 入场：预报 / 逐小时分区按层延迟渐显（只做透明度，不位移） */
+#jg-weather.jg-w-anim .jg-w-forecast { animation: jg-w-fade .5s ease .56s backwards; }
+#jg-weather.jg-w-anim .jg-w-hourly { animation: jg-w-fade .5s ease .64s backwards; }
 
 /* 页面切到后台时暂停所有循环动画，省电也省合成层 */
 #jg-weather.jg-w-paused .jg-w-fx i,
@@ -383,6 +470,10 @@ html.theme-dark #jg-weather .jg-w-city { background: rgba(143,191,156,.12); colo
     #jg-weather .jg-w-fx,
     #jg-weather .jg-w-sweep { display: none; }
     #jg-weather:hover { transform: none; }
+    /* 入场动画的「填充态」在 animation:none 后会退回初始值：曲线 dashoffset=100、面积 opacity=0，
+       不显式改回来的话，开了减少动态效果的用户会看不到逐小时曲线和渐变面积。 */
+    #jg-weather.jg-w-anim .jg-w-h-line { stroke-dashoffset: 0; }
+    #jg-weather.jg-w-anim .jg-w-h-area { opacity: 1; }
 }
 
 @media (max-width: 767px) {

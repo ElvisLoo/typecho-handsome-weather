@@ -1,6 +1,7 @@
 /* JG-WEATHER-START */
 /* Typecho Handsome 右侧栏天气控件（含按天气类型变化的动效层）
    数据源：同源 /weather.php（服务端按访客 IP 定位 + Open-Meteo）
+   展示：实时 + 未来 3 天预报 + 逐小时温度曲线（24h）+ AQI 空气徽标
    挂载点：#sidebar 第一个子元素；PJAX 换页后由 MutationObserver 自动重挂 */
 (function () {
     var ID = 'jg-weather', KEY = 'jg_weather_v1', TTL = 600000;
@@ -135,6 +136,74 @@
         requestAnimationFrame(step);
     }
 
+    /* ---------- 未来 3 天预报 ---------- */
+    var FC_LABELS = ['今天', '明天', '后天'];
+    function forecastHTML(daily) {
+        if (!Array.isArray(daily) || !daily.length) return '';
+        var h = '<div class="jg-w-forecast">', i;
+        for (i = 0; i < daily.length; i++) {
+            var it = daily[i];
+            var hi = (it.high === null || it.high === undefined) ? '--' : Math.round(it.high) + '°';
+            var lo = (it.low === null || it.low === undefined) ? '--' : Math.round(it.low) + '°';
+            var pop = (it.pop === null || it.pop === undefined || it.pop < 30) ? '' :
+                      '<div class="jg-w-fc-pop">' + it.pop + '%</div>';
+            h += '<div class="jg-w-fc-item">' +
+                    '<div class="jg-w-fc-d">' + esc(FC_LABELS[i] || (it.date || '')) + '</div>' +
+                    '<div class="jg-w-fc-i" title="' + esc(it.desc || '') + '">' + svg(wtype(it.code, 1)) + '</div>' +
+                    '<div class="jg-w-fc-t"><b>' + hi + '</b><span>' + lo + '</span></div>' +
+                    pop +
+                 '</div>';
+        }
+        return h + '</div>';
+    }
+
+    /* ---------- 逐小时温度（24h 曲线）+ AQI 徽标 ---------- */
+    function hourlyHTML(hours, aqi) {
+        if (!Array.isArray(hours) || hours.length < 2) return '';
+        var vals = [], i;
+        for (i = 0; i < hours.length; i++) {
+            var v = hours[i].temp;
+            if (typeof v === 'number' && isFinite(v)) vals.push(v);
+        }
+        if (vals.length < 2) return '';
+        var min = Math.min.apply(null, vals), max = Math.max.apply(null, vals);
+        if (max - min < 1) max = min + 1;
+        var W = 224, H = 46, P = 5, n = hours.length;
+        function X(idx) { return P + (W - 2 * P) * (n === 1 ? 0.5 : idx / (n - 1)); }
+        function Y(val) { return H - P - (H - 2 * P) * (val - min) / (max - min); }
+        var line = '', started = false;
+        for (i = 0; i < n; i++) {
+            var t = hours[i].temp;
+            if (typeof t !== 'number' || !isFinite(t)) continue;
+            line += (started ? ' L' : 'M') + X(i).toFixed(1) + ',' + Y(t).toFixed(1);
+            started = true;
+        }
+        var area = line + ' L' + X(n - 1).toFixed(1) + ',' + (H - P) +
+                   ' L' + X(0).toFixed(1) + ',' + (H - P) + ' Z';
+        var aqiChip = '';
+        if (aqi && aqi.us_aqi !== null && aqi.us_aqi !== undefined) {
+            var pm = (aqi.pm25 === null || aqi.pm25 === undefined) ? '' :
+                     ' · PM2.5 <b>' + Math.round(aqi.pm25) + '</b>';
+            aqiChip = '<span class="jg-w-aqi" style="--aqi:' + esc(aqi.color || '#4c8a67') + '">' +
+                        '<i></i>空气 <b>' + esc(aqi.level || '--') + '</b>' + pm + '</span>';
+        }
+        var mid = hours[Math.floor((n - 1) / 2)].time;
+        return '<div class="jg-w-hourly">' +
+                  '<div class="jg-w-h-head"><span>逐小时</span>' + aqiChip + '</div>' +
+                  '<svg class="jg-w-h-chart" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" aria-hidden="true">' +
+                    '<defs><linearGradient id="jg-wh-g" x1="0" y1="0" x2="0" y2="1">' +
+                      '<stop offset="0" stop-color="rgba(90,123,99,.30)"/>' +
+                      '<stop offset="1" stop-color="rgba(90,123,99,0)"/>' +
+                    '</linearGradient></defs>' +
+                    '<path class="jg-w-h-area" d="' + area + '" fill="url(#jg-wh-g)"/>' +
+                    '<path class="jg-w-h-line" pathLength="100" d="' + line + '" fill="none" ' +
+                      'stroke="#5a7b63" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>' +
+                  '</svg>' +
+                  '<div class="jg-w-h-scale"><span>' + esc(hours[0].time) + '</span>' +
+                    '<span>' + esc(mid) + '</span><span>' + esc(hours[n - 1].time) + '</span></div>' +
+               '</div>';
+    }
+
     function render(box, d) {
         var type = wtype(d.code, d.is_day);
         box.setAttribute('data-wtype', type);
@@ -150,6 +219,9 @@
                    esc(d.winddir || '') + ' ' + d.wind + '<small> km/h</small>';
         var range = (d.low === null || d.high === null || d.low === undefined || d.high === undefined) ?
                     '--' : d.low + ' ~ ' + d.high + '°';
+        // 今日降水概率（没有就退回高低温，保证第三格不空）
+        var popTxt = (d.daily && d.daily[0] && d.daily[0].pop !== null && d.daily[0].pop !== undefined)
+                     ? d.daily[0].pop + '%' : range;
         var foot = esc(d.time || '') + ' 更新 · ' + esc(d.source || 'Open-Meteo') +
                    (d.fallback ? ' <span class="jg-w-stale">（未能定位，显示默认城市）</span>' : '') +
                    (d.stale ? ' <span class="jg-w-stale">（缓存数据）</span>' : '');
@@ -163,8 +235,10 @@
             '<div class="jg-w-details">' +
                 '<span>湿度 <b>' + hum + '</b></span>' +
                 '<span><b>' + wind + '</b></span>' +
-                '<span>今日 <b>' + range + '</b></span>' +
+                '<span>降水 <b>' + popTxt + '</b></span>' +
             '</div>' +
+            forecastHTML(d.daily) +
+            hourlyHTML(d.hourly, d.aqi) +
             '<div class="jg-w-foot">' + foot + '</div>';
 
         buildFx(box, type);
@@ -194,6 +268,9 @@
             render(box, cached.data);
             return;
         }
+        // 刷新按钮持续旋转，直到这一轮请求落定（成功 / 失败都停）
+        var rb = box.querySelector('.jg-w-refresh');
+        if (rb) rb.classList.add('is-spin');
         body.innerHTML = '<div class="jg-w-loading"><i></i><span>正在获取天气…</span></div>';
         var url = ENDPOINT + '?' + (force ? 'force=1&' : '') + 't=' + Date.now();
         // 弱网 / 上游挂掉时 fetch 会一直挂着，卡片永远转圈。12 秒无响应就中断，走下面的 catch。
@@ -209,9 +286,11 @@
             .then(function (d) {
                 if (!d || !d.ok) throw new Error((d && d.error) || '天气数据异常');
                 try { localStorage.setItem(KEY, JSON.stringify({ ts: Date.now(), data: d })); } catch (e) {}
+                if (rb) rb.classList.remove('is-spin');
                 render(box, d);
             })
             .catch(function (e) {
+                if (rb) rb.classList.remove('is-spin');
                 if (cached && cached.data) { render(box, cached.data); markOffline(box); }
                 else showError(box, (e && e.name === 'AbortError') ? '获取超时，请点击重试' : (e && e.message));
             });
@@ -233,11 +312,6 @@
             var btn = t.closest && (t.closest('.jg-w-refresh') || t.closest('.jg-w-retry'));
             if (!btn) return;
             ev.preventDefault();
-            if (btn.classList.contains('jg-w-refresh')) {
-                btn.classList.remove('is-spin');
-                void btn.offsetWidth;
-                btn.classList.add('is-spin');
-            }
             try { localStorage.removeItem(KEY); } catch (e) {}
             load(true);
         });
