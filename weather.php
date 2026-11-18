@@ -50,7 +50,7 @@ $TRUSTED_PROXIES = ['114.66.0.0/16', '43.146.0.0/16', '43.159.0.0/16', '43.174.0
 // 源站只在令牌匹配时才采信转发头，直连者不知道令牌就无法伪造 EO-Connecting-IP。
 // 比 IP 段白名单更可靠（段会变），配好后建议把 $TRUSTED_PROXIES 清空。
 // 留空 = 不启用令牌，退回白名单判定。
-$ORIGIN_TOKEN = '';
+$ORIGIN_TOKEN = '9dda653ad685db465ce8fc6403f4b5ac428e137bb6ce6c02108c6880a78d6114';
 // 每个 IP 段每分钟的定位回源限流（未命中缓存时计数）
 $RATE_MAX    = 30;
 $RATE_WINDOW = 60;
