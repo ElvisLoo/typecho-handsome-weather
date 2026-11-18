@@ -40,10 +40,17 @@ $TTL      = 900;    // 天气缓存 15 分钟
 $GEO_TTL  = 86400;  // IP 段定位结果缓存 24 小时
 $GEO_DIR  = sys_get_temp_dir() . '/jg_geo_v2';   // 每个 IP 段一个文件，避免整表读写竞态
 $GEO_FILE = sys_get_temp_dir() . '/jg_geo_prefix_v1.json'; // 旧总表，仅一次性迁移读取
-// 可信 CDN 回源段：只有 REMOTE_ADDR 落在这里面，才采信 EO-Connecting-IP 等转发头。
-// 留空 = 不信任任何转发头（最安全，直连时按 REMOTE_ADDR 定位）。
-// 线上 EdgeOne 回源实测 114.66.247.140，可配 ['114.66.247.0/24']。
-$TRUSTED_PROXIES = [];
+// 可信 CDN 回源段：REMOTE_ADDR 落在这里面时才采信 EO-Connecting-IP 等转发头。
+// 留空 = 只按 $ORIGIN_TOKEN 判定；两者都空则一律按 REMOTE_ADDR 定位（最安全）。
+// 注意：EdgeOne 免费版自 2025-11-14 起已下架「源站防护」，不再提供回源 IP 段，
+// 所以这里填的是观测到的 EdgeOne 回源节点段，仅作兜底——节点段会随调度变化。
+$TRUSTED_PROXIES = ['114.66.0.0/16', '43.146.0.0/16', '43.159.0.0/16', '43.174.0.0/16', '43.175.0.0/16'];
+// 回源鉴权令牌（推荐）：在 EdgeOne 规则引擎「修改 HTTP 回源请求头」里加一条
+//   X-JG-Origin-Token: <令牌>
+// 源站只在令牌匹配时才采信转发头，直连者不知道令牌就无法伪造 EO-Connecting-IP。
+// 比 IP 段白名单更可靠（段会变），配好后建议把 $TRUSTED_PROXIES 清空。
+// 留空 = 不启用令牌，退回白名单判定。
+$ORIGIN_TOKEN = '';
 // 每个 IP 段每分钟的定位回源限流（未命中缓存时计数）
 $RATE_MAX    = 30;
 $RATE_WINDOW = 60;
@@ -134,9 +141,18 @@ function is_trusted_proxy($ip) {
  * 本机 / 内网自检（REMOTE_ADDR 为私网）仍按原顺序采信转发头。
  */
 function client_ip() {
+    global $TRUSTED_PROXIES, $ORIGIN_TOKEN;
     $remote = (string)($_SERVER['REMOTE_ADDR'] ?? '');
     $remotePub = public_ip($remote);
-    if ($remotePub !== '' && !is_trusted_proxy($remotePub)) {
+    $trusted = false;
+    if ($ORIGIN_TOKEN !== '') {
+        // 回源鉴权令牌匹配才采信转发头；hash_equals 防时序侧信道
+        $trusted = hash_equals($ORIGIN_TOKEN, (string)($_SERVER['HTTP_X_JG_ORIGIN_TOKEN'] ?? ''));
+    }
+    if (!$trusted && $remotePub !== '') {
+        $trusted = is_trusted_proxy($remotePub);
+    }
+    if ($remotePub !== '' && !$trusted) {
         return $remotePub; // 公网直连且非可信回源：不信任任何转发头
     }
     $keys = ['HTTP_EO_CONNECTING_IP', 'HTTP_CF_CONNECTING_IP', 'HTTP_X_FORWARDED_FOR',

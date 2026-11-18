@@ -18,8 +18,8 @@
 
 | 环节 | 做法 |
 | --- | --- |
-| 取真实 IP | 先看 `REMOTE_ADDR`：只有它落在 `$TRUSTED_PROXIES` 配置的 CDN 回源段内，才继续采信 `EO-Connecting-IP`（EdgeOne）/ `CF-Connecting-IP` / `X-Forwarded-For` / `X-Real-IP`；否则一律用 `REMOTE_ADDR` |
-| 为什么 | 这些转发头可被任意伪造。若源站暴露公网，攻击者 `curl -H 'EO-Connecting-IP: 8.8.8.8'` 就能把错误位置写进 24h 的 IP 段缓存，或伪造海量 IP 绕过坐标桶刷上游配额。实测回源头 `EO-Connecting-IP=153.37.203.176`、`REMOTE_ADDR=114.66.247.140`，所以把 `114.66.247.0/24` 配进 `$TRUSTED_PROXIES` 才采信头；留空则完全不信任转发头（最安全） |
+| 取真实 IP | 两级判定，满足其一才采信转发头（`EO-Connecting-IP`（EdgeOne）/ `CF-Connecting-IP` / `X-Forwarded-For` / `X-Real-IP`）：① 配了 `$ORIGIN_TOKEN` 时，请求头 `X-JG-Origin-Token` 用 `hash_equals` 比对通过；② 没配令牌时，`REMOTE_ADDR` 落在 `$TRUSTED_PROXIES` 段内。两者都不满足就只用 `REMOTE_ADDR` |
+| 为什么 | 这些转发头可被任意伪造。若源站暴露公网，攻击者 `curl -H 'EO-Connecting-IP: 8.8.8.8'` 就能把错误位置写进 24h 的 IP 段缓存，或伪造海量 IP 绕过坐标桶刷上游配额。**IP 段白名单有个硬伤**：EdgeOne 免费版自 2025-11-14 起已下架「源站防护」，不再提供回源 IP 段，且节点段会随调度漂移——实测同一批访客的回源节点同时落在 `114.66.247.x`、`114.66.250.x`、`43.146/159/174/175.x`，甚至有海外节点。所以仓库里 `$TRUSTED_PROXIES` 填的是**观测到的 EdgeOne 段，仅作兜底**；更可靠的是配 `$ORIGIN_TOKEN` + CDN 回源头 |
 | 自检兼容 | 本机 / 内网直连时 `REMOTE_ADDR` 是私网地址，仍按原顺序采信转发头，方便 `curl -H 'EO-Connecting-IP: …' 127.0.0.1/weather.php` 验证 |
 | 主定位源 | `ipwho.is/{ip}`，HTTPS、免 Key、直接给 `latitude` / `longitude` |
 | 备用源 | `ipinfo.io/{ip}/json`，用 `loc` 字段的 `lat,lon` |
@@ -110,6 +110,13 @@ IP 定位拿到的是**运营商出口**位置，精度到城市级，移动网�
    $FALLBACK_LON  = 116.4074;  // 示例经度，换成你自己的
    ```
 
+   站点在 EdgeOne / Cloudflare 这类 CDN 后面、源站又能被公网直连时，建议加一层**回源鉴权**（比 IP 段白名单可靠，节点段会变）：
+
+   1. 在 CDN 控制台「规则引擎 → 修改 HTTP 回源请求头」里加一条 `X-JG-Origin-Token: <一串随机字符>`；
+   2. 把同一串字符填进 `weather.php` 顶部的 `$ORIGIN_TOKEN`。
+
+   之后只有带正确令牌的回源请求才采信转发头，直连者无法伪造。
+
    浏览器直接访问 `/weather.php`，应返回自己所在城市的天气：
 
    ```json
@@ -172,7 +179,7 @@ IP 定位拿到的是**运营商出口**位置，精度到城市级，移动网�
 - **动效要搬机制，别搬皮**。原站是紫色玻璃拟态渐变卡 + 雨雪粒子 + 温度滚动数字；一开始我把这些全去掉了，后来又按同样的机制做了一套 Handsome 配色版：粒子层、分层入场、扫光、图标自转都保留，颜色全部换成 grass 灰绿，透明度压到不干扰正文。卡片外观仍是白底、6px 圆角、细阴影、内联 SVG 图标，顶部渐变条按 WMO 天气码微调。详见「动效」一节。
 - **上游挂掉要能用**。缓存过期但回源失败时，返回旧数据并标 `stale=1`；定位源全挂时回退常量坐标并标 `fallback=1`；完全没缓存才显示重试入口。
 - **前端 fetch 要设超时**。原来 `fetch` 没有超时，弱网或 `/weather.php` 卡住时卡片会一直停在「正在获取天气…」。现在 12 秒无响应就 `AbortController` 中断，显示「获取超时，请点击重试」；有缓存时仍然先渲染缓存。
-- **转发头不能无条件信任**。公开端点任何人都能直连源站伪造 `EO-Connecting-IP`，把错误位置写进 24h 的 IP 段缓存，或伪造海量 IP 绕过坐标桶刷 Open-Meteo 配额。现在只有 `REMOTE_ADDR` 落在 `$TRUSTED_PROXIES`（CDN 回源段）才采信转发头，公网直连一律以 `REMOTE_ADDR` 为准。
+- **转发头不能无条件信任**。公开端点任何人都能直连源站伪造 `EO-Connecting-IP`，把错误位置写进 24h 的 IP 段缓存，或伪造海量 IP 绕过坐标桶刷 Open-Meteo 配额。现在采信转发头需要满足其一：`$ORIGIN_TOKEN` 匹配，或 `REMOTE_ADDR` 落在 `$TRUSTED_PROXIES`。**别指望 IP 段白名单一劳永逸**——EdgeOne 免费版已下架源站防护，回源段不再官方提供且会漂移；能配回源令牌就配。
 - **整表缓存有读写竞态**。原来定位缓存是「读整个 JSON → 内存改 → 整份写回」，`file_put_contents` 的 `LOCK_EX` 只锁写、读没锁，并发会互相覆盖。改成每 IP 段一个独立小文件，读写粒度对齐，顺带省掉 1500 条裁剪。
 - **风向方位角要按 ±22.5° 归属**。`round($d/45)` 会让 22.5° 判成「东北」而气象惯例是「北」，改成 `floor(($d+22.5)/45)%8`。
 - **离线回退缓存要明示**。fetch 失败且有本地缓存时，现在会在脚注追加「（离线，显示上次数据）」，避免用户以为数据是刚刷新的。
